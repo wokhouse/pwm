@@ -7,8 +7,9 @@ import { spawnAgent } from "../agent/spawn.js";
 export function registerSpawnCommand(program: Command): void {
   program
     .command("spawn <name> [prompt]")
+    .option("-a, --attach", "Attach to the spawned tmux window immediately")
     .description("Launch claude agent in a tmux pane for the given worktree")
-    .action((name: string, prompt?: string) => {
+    .action((name: string, prompt?: string, options?: { attach?: boolean }) => {
       const projectRoot = requireGitRepo();
 
       // Validate .pwm/ exists
@@ -23,6 +24,6 @@ export function registerSpawnCommand(program: Command): void {
         process.exit(1);
       }
 
-      spawnAgent({ projectRoot, name, prompt });
+      spawnAgent({ projectRoot, name, prompt, attach: options?.attach });
     });
 }
