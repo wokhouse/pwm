@@ -52,7 +52,13 @@ pwm spawn feature-auth "implement login page"
 pwm spawn feature-auth
 ```
 
-This creates a tmux session for the project (if one doesn't exist) and opens a window named after the worktree. You're switched to that window automatically.
+Options:
+
+| Flag | Description |
+|---|---|
+| `-a, --attach` | Attach to the spawned tmux window immediately |
+
+This creates a tmux session for the project (if one doesn't exist) and opens a window named after the worktree. By default, the agent runs in the background. Use `--attach` to switch to its window immediately.
 
 ### `pwm ls`
 
