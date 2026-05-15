@@ -1,68 +1,82 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
-import { parseJsonl, type ParsedSummary } from "./parser.js";
+import { parseSessionJsonl, type ParsedSummary } from "./parser.js";
 import type { WorktreeEntry, AgentInfo } from "../state.js";
 
 export interface WorktreeStatus {
   name: string;
   branch: string;
-  agentStatus: AgentInfo["status"] | "none";
+  agentStatus: AgentInfo["status"] | "none" | "waiting";
   lastAction: string;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedCost: number;
 }
 
 /**
- * Estimate cost based on token usage.
- * Rough Claude pricing: $3/M input, $15/M output (Sonnet rates).
+ * Encode an absolute path the way Claude Code does for its project directories.
+ * Both / and . are replaced with -.
  */
-function estimateCost(inputTokens: number, outputTokens: number): number {
-  const inputCost = (inputTokens / 1_000_000) * 3;
-  const outputCost = (outputTokens / 1_000_000) * 15;
-  return Math.round((inputCost + outputCost) * 100) / 100;
+function encodeProjectPath(absPath: string): string {
+  return absPath.replace(/[/\\.]/g, "-");
 }
 
-/** Format token count for display (e.g., 45000 -> "45k"). */
-function formatTokens(n: number): string {
-  if (n >= 1000) return `${Math.round(n / 1000)}k`;
-  return String(n);
-}
+/**
+ * Find the latest session JSONL file for a worktree path.
+ * Claude Code stores sessions at ~/.claude/projects/<encoded-path>/*.jsonl
+ */
+function findLatestSession(worktreeAbsPath: string): string | null {
+  const encoded = encodeProjectPath(worktreeAbsPath);
+  const projectDir = path.join(os.homedir(), ".claude", "projects", encoded);
 
-/** Get the parsed summary from a worktree's jsonl output file. */
-export function getWorktreeSummary(
-  projectRoot: string,
-  worktree: WorktreeEntry,
-): ParsedSummary | null {
-  const jsonlPath = path.join(projectRoot, worktree.path, ".claude-output.jsonl");
-  if (!fs.existsSync(jsonlPath)) return null;
+  if (!fs.existsSync(projectDir)) return null;
 
   try {
-    // Read last 100KB to avoid loading huge files
-    const stat = fs.statSync(jsonlPath);
-    const readSize = Math.min(stat.size, 100_000);
-    const fd = fs.openSync(jsonlPath, "r");
+    const files = fs
+      .readdirSync(projectDir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .map((f) => ({
+        name: f,
+        path: path.join(projectDir, f),
+        mtime: fs.statSync(path.join(projectDir, f)).mtimeMs,
+      }))
+      .sort((a, b) => b.mtime - a.mtime);
+
+    return files.length > 0 ? files[0].path : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read the tail of a session JSONL file and parse it. */
+function getSessionSummary(worktreeAbsPath: string): ParsedSummary | null {
+  const sessionFile = findLatestSession(worktreeAbsPath);
+  if (!sessionFile) return null;
+
+  try {
+    const stat = fs.statSync(sessionFile);
+    if (stat.size === 0) return null;
+
+    // Read last 200KB to get recent events
+    const readSize = Math.min(stat.size, 200_000);
+    const fd = fs.openSync(sessionFile, "r");
     const buf = Buffer.alloc(readSize);
     fs.readSync(fd, buf, 0, readSize, stat.size - readSize);
     fs.closeSync(fd);
 
     const content = buf.toString("utf-8");
-    return parseJsonl(content);
+    return parseSessionJsonl(content);
   } catch {
     return null;
   }
 }
 
 /** Check if a tmux window still has a running process. */
-export function isTmuxWindowAlive(sessionName: string, windowName: string): boolean {
+function isTmuxWindowAlive(sessionName: string, windowName: string): boolean {
   try {
-    // Check if the window exists and has an active process
     const result = execSync(
       `tmux list-panes -t "${sessionName}:${windowName}" -F "#{pane_dead}" 2>/dev/null`,
       { encoding: "utf-8" },
     );
-    // If pane_dead is 0, the pane is alive (process running)
     return result.trim().split("\n").every((line) => line.trim() === "0");
   } catch {
     return false;
@@ -81,35 +95,27 @@ export function computeStatus(
     branch: worktree.branch,
     agentStatus: "none",
     lastAction: "—",
-    inputTokens: 0,
-    outputTokens: 0,
-    estimatedCost: 0,
   };
 
   if (!worktree.agent) return status;
 
-  const summary = getWorktreeSummary(projectRoot, worktree);
+  const worktreeAbsPath = path.resolve(projectRoot, worktree.path);
+  const summary = getSessionSummary(worktreeAbsPath);
 
-  if (summary) {
+  if (summary?.latestEvent?.action) {
     status.lastAction = summary.lastAction;
-    status.inputTokens = summary.totalUsage.inputTokens;
-    status.outputTokens = summary.totalUsage.outputTokens;
-    status.estimatedCost = estimateCost(
-      summary.totalUsage.inputTokens,
-      summary.totalUsage.outputTokens,
-    );
   }
 
-  // Determine status
-  if (summary?.finished) {
-    status.agentStatus = summary.lastAction === "failed" ? "failed" : "done";
-  } else if (worktree.agent.status === "running") {
-    // Check if the tmux window is still alive
+  // Determine agent status
+  if (worktree.agent.status === "running") {
     const alive = isTmuxWindowAlive(sessionName, name);
     if (alive) {
-      status.agentStatus = "running";
+      if (summary?.finished) {
+        status.agentStatus = "waiting";
+      } else {
+        status.agentStatus = "running";
+      }
     } else if (summary && summary.eventCount > 0) {
-      // Window gone but we have events — likely finished
       status.agentStatus = "done";
     } else {
       status.agentStatus = "idle";
@@ -119,22 +125,6 @@ export function computeStatus(
   }
 
   return status;
-}
-
-/** Format a status table row for display. */
-export function formatStatusRow(s: WorktreeStatus): string {
-  const tokens = s.inputTokens + s.outputTokens;
-  const tokenStr = tokens > 0 ? formatTokens(tokens) : "0";
-  const costStr = s.estimatedCost > 0 ? `$${s.estimatedCost.toFixed(2)}` : "$0.00";
-
-  const name = s.name.padEnd(16);
-  const branch = s.branch.padEnd(16);
-  const status = s.agentStatus.padEnd(14);
-  const action = s.lastAction.padEnd(20);
-  const tok = tokenStr.padEnd(10);
-  const cost = costStr.padEnd(8);
-
-  return `${name}${branch}${status}${action}${tok}${cost}`;
 }
 
 /** Print the full status table. */
@@ -148,13 +138,15 @@ export function printStatusTable(statuses: WorktreeStatus[]): void {
     "NAME".padEnd(16) +
     "BRANCH".padEnd(16) +
     "STATUS".padEnd(14) +
-    "LAST ACTION".padEnd(20) +
-    "TOKENS".padEnd(10) +
-    "COST".padEnd(8);
+    "LAST ACTION".padEnd(20);
 
   console.log(header);
   console.log("─".repeat(header.length));
   for (const s of statuses) {
-    console.log(formatStatusRow(s));
+    const name = s.name.padEnd(16);
+    const branch = s.branch.padEnd(16);
+    const st = s.agentStatus.padEnd(14);
+    const action = s.lastAction.padEnd(20);
+    console.log(`${name}${branch}${st}${action}`);
   }
 }

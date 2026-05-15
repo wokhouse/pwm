@@ -1,12 +1,18 @@
 /**
- * Parser for Claude Code's stream-json (NDJSON) output.
+ * Parser for Claude Code's session JSONL files.
  *
- * Each line is a JSON object with a `type` field. Key events:
- * - type "assistant": content blocks with tool_use, text, etc. May include usage.
- * - type "user": user messages
- * - type "system": system messages
+ * Session files live at ~/.claude/projects/<encoded-path>/<session-uuid>.jsonl
+ * Each line is a JSON record with fields: type, uuid, parentUuid, timestamp,
+ * sessionId, message, cwd, etc.
  *
- * We extract: latest tool call, token usage, and completion status.
+ * Key record types:
+ * - type "user": user messages (initial prompt, tool results)
+ * - type "assistant": assistant messages with content blocks (text, tool_use)
+ * - type "summary": compaction checkpoint
+ * - type "queue-operation": internal queue events (skip)
+ *
+ * We extract: latest tool call, event count, and completion status.
+ * Token usage is not reliably available in session files so we skip it.
  */
 
 export interface ParsedEvent {
@@ -15,26 +21,13 @@ export interface ParsedEvent {
   tool?: string;
   /** Summary of what the tool is doing */
   action?: string;
-  /** Input details for the tool call */
-  toolInput?: Record<string, unknown>;
-  /** Token usage from the event */
-  usage?: TokenUsage;
   /** Raw event for debugging */
   raw: Record<string, unknown>;
-}
-
-export interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens?: number;
-  cacheCreationTokens?: number;
 }
 
 export interface ParsedSummary {
   /** Latest meaningful event */
   latestEvent: ParsedEvent | null;
-  /** Cumulative token usage */
-  totalUsage: TokenUsage;
   /** Number of events parsed */
   eventCount: number;
   /** Last tool call description for display */
@@ -43,7 +36,7 @@ export interface ParsedSummary {
   finished: boolean;
 }
 
-/** Parse a single NDJSON line into a ParsedEvent. */
+/** Parse a single session JSONL line into a ParsedEvent. */
 export function parseLine(line: string): ParsedEvent | null {
   if (!line.trim()) return null;
 
@@ -54,47 +47,25 @@ export function parseLine(line: string): ParsedEvent | null {
     return null;
   }
 
-  if (!obj.type || typeof obj.type !== "string") {
-    return { type: "unknown", raw: obj };
-  }
+  const type = obj.type;
+  if (!type || typeof type !== "string") return null;
 
-  const event: ParsedEvent = { type: obj.type, raw: obj };
+  // Skip internal events
+  if (type === "queue-operation") return null;
+
+  const event: ParsedEvent = { type, raw: obj };
 
   // Extract tool use from assistant messages
-  if (obj.type === "assistant" && Array.isArray(obj.content)) {
-    for (const block of obj.content as Record<string, unknown>[]) {
-      if (block.type === "tool_use" && typeof block.name === "string") {
-        event.tool = block.name;
-        event.toolInput = block.input as Record<string, unknown>;
-        event.action = describeToolCall(block.name, block.input as Record<string, unknown>);
+  if (type === "assistant" && obj.message && typeof obj.message === "object") {
+    const msg = obj.message as Record<string, unknown>;
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      for (const block of content as Record<string, unknown>[]) {
+        if (block.type === "tool_use" && typeof block.name === "string") {
+          event.tool = block.name;
+          event.action = describeToolCall(block.name, (block.input ?? {}) as Record<string, unknown>);
+        }
       }
-    }
-
-    // Extract usage
-    if (obj.usage && typeof obj.usage === "object") {
-      const u = obj.usage as Record<string, unknown>;
-      event.usage = {
-        inputTokens: Number(u.input_tokens ?? u.inputTokens ?? 0),
-        outputTokens: Number(u.output_tokens ?? u.outputTokens ?? 0),
-        cacheReadTokens: u.cache_read_input_tokens != null
-          ? Number(u.cache_read_input_tokens)
-          : undefined,
-        cacheCreationTokens: u.cache_creation_input_tokens != null
-          ? Number(u.cache_creation_input_tokens)
-          : undefined,
-      };
-    }
-  }
-
-  // type "result" indicates the agent finished
-  if (obj.type === "result") {
-    event.action = obj.subtype === "error" ? "error" : "done";
-    if (obj.usage && typeof obj.usage === "object") {
-      const u = obj.usage as Record<string, unknown>;
-      event.usage = {
-        inputTokens: Number(u.input_tokens ?? u.inputTokens ?? 0),
-        outputTokens: Number(u.output_tokens ?? u.outputTokens ?? 0),
-      };
     }
   }
 
@@ -126,15 +97,17 @@ function describeToolCall(tool: string, input: Record<string, unknown>): string 
 }
 
 /** Parse all non-empty lines and produce a summary. */
-export function parseJsonl(content: string): ParsedSummary {
+export function parseSessionJsonl(content: string): ParsedSummary {
   const lines = content.split("\n").filter((l) => l.trim());
   const result: ParsedSummary = {
     latestEvent: null,
-    totalUsage: { inputTokens: 0, outputTokens: 0 },
     eventCount: 0,
     lastAction: "—",
     finished: false,
   };
+
+  let lastAssistantEvent: ParsedEvent | null = null;
+  let hasUserAfterLastAssistant = false;
 
   for (const line of lines) {
     const event = parseLine(line);
@@ -142,33 +115,35 @@ export function parseJsonl(content: string): ParsedSummary {
 
     result.eventCount++;
 
-    // Accumulate usage (take the largest values seen)
-    if (event.usage) {
-      result.totalUsage.inputTokens = Math.max(
-        result.totalUsage.inputTokens,
-        event.usage.inputTokens,
-      );
-      result.totalUsage.outputTokens = Math.max(
-        result.totalUsage.outputTokens,
-        event.usage.outputTokens,
-      );
-    }
-
-    // Track latest meaningful event
-    if (event.tool || event.type === "result") {
+    // Track latest meaningful event (tool calls, or any assistant event)
+    if (event.tool) {
+      result.latestEvent = event;
+    } else if (event.type === "assistant" && !result.latestEvent?.tool) {
       result.latestEvent = event;
     }
-  }
 
-  // Derive last action and finished status
-  if (result.latestEvent) {
-    if (result.latestEvent.type === "result") {
-      result.finished = true;
-      result.lastAction = result.latestEvent.action === "error" ? "failed" : "completed";
-    } else if (result.latestEvent.action) {
-      result.lastAction = result.latestEvent.action;
+    // Track last assistant event and whether user input followed it
+    if (event.type === "assistant") {
+      lastAssistantEvent = event;
+      hasUserAfterLastAssistant = false;
+    } else if (event.type === "user") {
+      hasUserAfterLastAssistant = true;
     }
   }
+
+  // Derive last action
+  if (result.latestEvent?.action) {
+    result.lastAction = result.latestEvent.action;
+  }
+
+  // Agent is "finished" (waiting for input) when the last assistant message
+  // has no tool_use AND no user input arrived after it. This correctly
+  // handles JSONL files that end with progress/system/summary events after
+  // the final assistant message.
+  result.finished =
+    lastAssistantEvent !== null &&
+    !lastAssistantEvent.tool &&
+    !hasUserAfterLastAssistant;
 
   return result;
 }

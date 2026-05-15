@@ -50,3 +50,8 @@ export function killWindow(target: string): void {
 export function hasWindow(session: string, windowName: string): boolean {
   return listWindows(session).includes(windowName);
 }
+
+/** Switch the tmux client to a different target (session:window). */
+export function switchClient(target: string): void {
+  tmux(`switch-client -t "${target}"`);
+}

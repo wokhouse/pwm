@@ -1,16 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ProjectRoot } from "./state.js";
 
 export interface Config {
   project: string;
   defaultAgent: string;
   agentCommand: string;
+  dashboardRefreshInterval?: number;
 }
 
 const DEFAULT_CONFIG: Omit<Config, "project"> = {
   defaultAgent: "claude",
-  agentCommand: "claude -p --output-format stream-json",
+  agentCommand: "claude -p",
+  dashboardRefreshInterval: 5000,
 };
 
 export function configPath(projectRoot: string): string {

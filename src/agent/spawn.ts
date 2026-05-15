@@ -40,22 +40,19 @@ export function spawnAgent({ projectRoot, name, prompt }: SpawnOptions): void {
   // Create tmux window for this worktree
   tmux.newWindow(sessionName, name, worktreeAbsPath);
 
-  // Build the command
-  let command: string;
-  const jsonlPath = path.join(worktreeAbsPath, ".claude-output.jsonl");
-
-  if (mode === "print") {
-    // Non-interactive: use -p flag with prompt, tee to jsonl
-    const escapedPrompt = prompt!.replace(/"/g, '\\"').replace(/\$/g, "\\$");
-    command = `${config.agentCommand} "${escapedPrompt}" 2>&1 | tee "${jsonlPath}"`;
-  } else {
-    // Interactive: just launch claude with stream-json output
-    command = `claude --output-format stream-json 2>&1 | tee "${jsonlPath}"`;
-  }
-
-  // Send command to the tmux window
   const target = `${sessionName}:${name}`;
-  tmux.sendKeys(target, command);
+
+  // Always launch claude interactively (full TUI experience)
+  // Then send the prompt as typed input if provided
+  tmux.sendKeys(target, "claude");
+
+  if (mode === "print" && prompt) {
+    // Wait for claude to start, then type the prompt and press Enter
+    const escapedPrompt = prompt.replace(/"/g, '\\"').replace(/\$/g, "\\$");
+    setTimeout(() => {
+      tmux.sendKeys(target, escapedPrompt);
+    }, 2000);
+  }
 
   // Update state with agent info
   const agentInfo: AgentInfo = {

@@ -5,6 +5,7 @@ import { registerSpawnCommand } from "./commands/spawn.js";
 import { registerLsCommand } from "./commands/ls.js";
 import { registerAttachCommand } from "./commands/attach.js";
 import { registerRmCommand } from "./commands/rm.js";
+import { registerDashboardCommand } from "./commands/dashboard.js";
 
 const program = new Command();
 
@@ -19,5 +20,6 @@ registerSpawnCommand(program);
 registerLsCommand(program);
 registerAttachCommand(program);
 registerRmCommand(program);
+registerDashboardCommand(program);
 
 program.parse();
