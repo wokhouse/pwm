@@ -52,8 +52,6 @@ export function registerRmCommand(program: Command): void {
         // Branch may already be gone — non-fatal
       }
 
-      // Clean up .claude-output.jsonl inside worktree directory (already removed with worktree, but just in case)
-
       // Remove from state
       delete state.worktrees[name];
       writeState(projectRoot, state);

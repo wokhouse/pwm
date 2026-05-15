@@ -9,7 +9,7 @@ export function registerSpawnCommand(program: Command): void {
     .command("spawn <name> [prompt]")
     .description("Launch claude agent in a tmux pane for the given worktree")
     .action((name: string, prompt?: string) => {
-      const projectRoot = requireGitRoot();
+      const projectRoot = requireGitRepo();
 
       // Validate .pwm/ exists
       if (!fs.existsSync(pwmDir(projectRoot))) {
@@ -25,9 +25,4 @@ export function registerSpawnCommand(program: Command): void {
 
       spawnAgent({ projectRoot, name, prompt });
     });
-}
-
-/** Alias to avoid confusion with the command name. */
-function requireGitRoot(): string {
-  return requireGitRepo();
 }
