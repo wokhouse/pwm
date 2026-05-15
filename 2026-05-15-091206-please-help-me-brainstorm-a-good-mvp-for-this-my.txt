@@ -1,0 +1,883 @@
+
+╭─── Claude Code v2.1.42 ──────────────────────────────────────────────────────╮
+│                                 │ Tips for getting started                   │
+│          Welcome back!          │ Run /init to create a CLAUDE.md file with… │
+│                                 │ ────────────────────────────────────────── │
+│             ▐▛███▜▌             │ Recent activity                            │
+│            ▝▜█████▛▘            │ No recent activity                         │
+│              ▘▘ ▝▝              │                                            │
+│                                 │                                            │
+│   glm-5.1 · API Usage Billing   │                                            │
+│          ~/vscode/pwm           │                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+  /model to try Opus 4.6
+
+❯ please help me brainstorm a good mvp for this. my idea is called "petite  
+  worktree manager". i would like to make a typescript based cli tool for   
+  managing git worktree creation/lifecycle and running multiple parallel    
+  coding agents like claude code at once. i imagine going into a repo dir,  
+  typing a "pwm" command which would allow you to create worktrees in a     
+  project-local .pwm directory. i think some canidates for MVP features     
+  would be 1. worktree navigator side bar 2. terminal tabs w/ in worktree   
+  3. agent status at a glance (we should be able to see what agents in what 
+   worktrees need attention.                                                
+
+⏺ Let me check what's already in the repo to understand the starting point.
+
+⏺ Bash(git -C /Users/fungj/vscode/pwm log --oneline -5)
+  ⎿  c138ed9 Initial commit
+
+⏺ Empty repo with just a README. Good starting point. Here's my analysis of your
+   MVP idea:
+
+  "Petite Worktree Manager" — MVP Brainstorm
+
+  Core Problem You're Solving
+
+  Running multiple coding agents (Claude Code, etc.) in parallel across git
+  worktrees is tedious. The workflow is: create a branch, create a worktree, cd
+  into it, launch an agent, monitor it, repeat. You want one tool that
+  orchestrates all of this.
+
+  Recommended MVP Scope
+
+  I'd suggest stripping it down further than your 3 candidates for v1. Here's my
+   reasoning:
+
+  Tier 1 — Ship First (True MVP)
+  1. pwm init — Scaffold .pwm/ in a repo, record config (default branch, agent
+  command template)
+  2. pwm create <name> — Create a git worktree inside .pwm/<name>/, linked to a
+  new branch <name>
+  3. pwm spawn <name> [--agent <cmd>] — Launch an agent process inside a
+  worktree, track its PID and status
+  4. pwm ls — Table view of all worktrees + branch + agent status
+  (running/done/crashed/needs-input)
+  5. pwm attach <name> — Jump into the worktree's agent tmux/screen session
+  6. pwm rm <name> — Kill agent, remove worktree, delete branch
+
+  Tier 2 — Polish (v1.1)
+  7. TUI sidebar navigator (your #1) — an interactive pwm (no args) that opens a
+   terminal UI showing worktrees as a list you can navigate
+  8. Terminal multiplexing (your #2) — built-in tab management, probably via
+  tmux session management under the hood
+
+  Tier 3 — Future
+  9. Agent output streaming / log tailing
+  10. Configurable agent templates (Claude Code, Aider, Cursor, etc.)
+  11. Merge/PR workflow integration
+  12. Resource monitoring (CPU/memory per agent)
+
+  Why This Ordering?
+
+  - Agent status at a glance is the highest-value feature and is achievable in a
+   simple ls command — no TUI needed for v1
+  - TUI/sidebar is the biggest engineering investment with the most dependency
+  complexity (Ink, terminal rendering, keyboard handling) — validate the core
+  workflow first with pure CLI commands
+  - Terminal tabs implies you need to choose a multiplexing strategy (tmux?
+  zellij? custom?) — this is an architectural decision that benefits from
+  real-world usage first
+
+  Key Architectural Decisions to Make Early
+
+  Decision: Process management
+  Options: Raw child processes vs. tmux sessions vs. systemd-user units
+  ────────────────────────────────────────
+  Decision: State storage
+  Options: .pwm/state.json vs. sqlite vs. filesystem-only
+  ────────────────────────────────────────
+  Decision: Agent detection
+  Options: Parse exit codes + stdout heuristics vs. require agents to write
+    status files
+  ────────────────────────────────────────
+  Decision: Distribution
+  Options: npm global install vs. npx vs. homebrew
+
+  My Recommendation for Process Management
+
+  Use tmux sessions under the hood. Each pwm spawn creates a tmux session named
+  pwm-<name>. This gives you:
+  - Detachable processes for free
+  - pwm attach is just tmux attach -t pwm-<name>
+  - Agent output is captured in tmux's scrollback
+  - Status checking via tmux list-sessions + process existence
+
+  Concrete MVP Session Flow
+
+  $ cd my-project
+  $ pwm init                          # creates .pwm/, stores config
+
+  $ pwm create feature-auth           # worktree at .pwm/feature-auth
+  $ pwm create feature-api            # worktree at .pwm/feature-api
+
+  $ pwm spawn feature-auth            # launches claude-code in
+  .pwm/feature-auth
+  $ pwm spawn feature-api             # launches claude-code in .pwm/feature-api
+
+  $ pwm ls                            # shows:
+    # NAME           BRANCH              AGENT     STATUS
+    # feature-auth   feature-auth        claude    running (12m)
+    # feature-api    feature-api         claude    needs-input ⚠
+
+  $ pwm attach feature-api            # jumps into that agent's session
+  # (agent asks a question, user answers, detaches)
+
+  $ pwm rm feature-auth               # kills agent, removes worktree + branch
+
+  Tech Stack for TypeScript CLI
+
+  - Runtime: Node.js (not Bun/Deno — widest compatibility)
+  - CLI framework: commander or yargs
+  - TUI (Tier 2): ink (React for terminal) or blessed
+  - Git operations: shell out to git directly (don't use a git library —
+  worktree commands change fast)
+  - Process management: child_process + tmux
+  - State: .pwm/state.json — keep it dead simple
+
+  ---
+  Want me to start scaffolding the project? I'd suggest starting with
+  package.json setup, the basic CLI command structure, and the init/create/ls
+  commands as the first implementation target.
+
+✻ Churned for 1m 2s
+
+❯ i think i would like to include terminal multiplexing in the mvp. my      
+  later goal would be to run this on an external server such that i could   
+  ssh into it, do my development work, then close my laptop and reopen      
+  later and progress would still be made                                    
+
+⏺ That changes the architecture in a good way. If remote persistence is a core
+  goal, tmux becomes the foundation rather than a nice-to-have. Here's how I'd
+  revise:
+
+  Revised Architecture: tmux-Native MVP
+
+  Instead of building a custom TUI, pwm becomes a tmux orchestrator. The tool
+  manages a single tmux session per project that gives you:
+
+  - Persistent terminals that survive SSH disconnects
+  - A layout with a status sidebar + per-worktree terminal panes
+  - Agent lifecycle management inside those panes
+
+  The Mental Model
+
+  When you run pwm (or pwm up), you enter a tmux session structured like:
+
+  ┌──────────────────────────────────────────────────┐
+  │  pwm: my-project                    [worktrees]  │
+  │──────────────────────┬───────────────────────────│
+  │                      │                           │
+  │   STATUS SIDEBAR     │   ACTIVE WORKTREE PANE    │
+  │                      │                           │
+  │  ● feature-auth      │   (agent terminal here)   │
+  │    branch: feat/auth │                           │
+  │    agent: claude     │                           │
+  │    status: running   │                           │
+  │    uptime: 12m       │                           │
+  │                      │                           │
+  │  ● feature-api       │                           │
+  │    branch: feat/api  │                           │
+  │    agent: claude     │                           │
+  │    status: ⚠ input   │                           │
+  │    uptime: 8m        │                           │
+  │                      │                           │
+  │  ○ fix-typos         │                           │
+  │    branch: fix/typos │                           │
+  │    agent: none       │                           │
+  │                      │                           │
+  │──────────────────────┴───────────────────────────│
+  │  a:create d:delete enter:switch s:spawn q:detach │
+  │──────────────────────────────────────────────────│
+  └──────────────────────────────────────────────────┘
+
+  Revised Command Set
+
+  Command: pwm init
+  What it does: Create .pwm/ config, register project
+  ────────────────────────────────────────
+  Command: pwm create <name>
+  What it does: Create worktree at .pwm/<name>/ + new branch
+  ────────────────────────────────────────
+  Command: pwm up or just pwm
+  What it does: Open tmux session (attach if exists, create if not)
+  ────────────────────────────────────────
+  Command: pwm spawn <name>
+  What it does: Launch agent in a new tmux window for that worktree
+  ────────────────────────────────────────
+  Command: pwm ls
+  What it does: Non-interactive table (works outside tmux too, good for
+    scripting)
+  ────────────────────────────────────────
+  Command: pwm kill <name>
+  What it does: Kill agent process in worktree's pane
+  ────────────────────────────────────────
+  Command: pwm rm <name>
+  What it does: Kill agent + remove worktree + delete branch
+  ────────────────────────────────────────
+  Command: pwm down
+  What it does: Kill the pwm tmux session (with confirmation if agents running)
+
+  Key Design Decisions for Remote-First
+
+  State file: .pwm/state.json tracks worktrees, branches, agent PIDs, spawn
+  timestamps. This is your source of truth — tmux is just the presentation
+  layer.
+
+  tmux session naming: pwm-<repo-hash> — allows multiple projects on one server
+  without collision.
+
+  Agent status detection: Rather than trying to parse agent output (fragile),
+  use a convention:
+  - Agent is "running" if its PID is alive
+  - Agent is "needs-input" if the tmux pane's process has been waiting > N
+  seconds on stdin (detectable via /proc or ps stat)
+  - Agent is "done" if PID exited with code 0
+  - Agent is "failed" if PID exited with code != 0
+
+  Sidebar refresh: A background process that re-renders the sidebar pane every
+  few seconds by reading state.json + checking process status.
+
+  The SSH Workflow
+
+  # On your server
+  $ cd ~/projects/my-app
+  $ pwm init
+  $ pwm create feature-auth
+  $ pwm create feature-api
+  $ pwm spawn feature-auth        # starts agent, runs in tmux
+  $ pwm spawn feature-api         # starts agent, runs in tmux
+  $ pwm up                        # enter the session
+  # ... check on agents, interact with one that needs input ...
+  # Ctrl+b d (standard tmux detach) — or `q` from sidebar
+
+  # Close laptop. Go outside. Come back.
+
+  $ ssh my-server
+  $ pwm up                        # reattach, everything still running
+
+  Suggested Project Structure
+
+  pwm/
+    src/
+      commands/          # CLI command handlers
+        init.ts
+        create.ts
+        up.ts
+        spawn.ts
+        ls.ts
+        kill.ts
+        rm.ts
+        down.ts
+      tmux/              # tmux interaction layer
+        session.ts       # create/attach/kill sessions
+        layout.ts        # set up sidebar + pane layout
+        sidebar.ts       # render status sidebar, background refresh
+      worktree/          # git worktree operations
+        create.ts
+        remove.ts
+        list.ts
+      agent/             # agent process management
+        spawn.ts         # launch agent in tmux pane
+        status.ts        # check PID, detect needs-input state
+        kill.ts
+      state.ts           # read/write .pwm/state.json
+      config.ts          # .pwm/config.json defaults
+    package.json
+    tsconfig.json
+
+  What's NOT in MVP (explicitly deferred)
+
+  - Custom agent integrations (just run whatever command user specifies, default
+   to claude)
+  - Log streaming / output search
+  - PR/merge workflow
+  - Resource monitoring
+  - Multi-user support
+  - Web UI
+
+  ---
+  Want me to start building this? I'd tackle it in this order:
+
+  1. Project scaffolding (package.json, tsconfig.json, CLI entry point)
+  2. pwm init + state management
+  3. pwm create / pwm rm (git worktree operations)
+  4. pwm spawn (agent launch in tmux)
+  5. pwm ls (status checking)
+  6. pwm up (tmux session with sidebar)
+
+✻ Brewed for 1m 3s
+
+❯ is it possible to tie in more directly if we assume we are only using     
+  claude code as the agent for mvp?                                         
+
+⏺ Great instinct. If you assume Claude Code only, you can tap into its
+  structured output and session model directly, which gives you a much richer
+  sidebar and better state detection.
+
+  Let me check what Claude Code exposes programmatically.
+
+⏺ claude-code-guide(Research Claude Code APIs)
+  ⎿  Done (5 tool uses · 14.7k tokens · 4m 51s)
+  (ctrl+o to expand)
+
+⏺ Good findings. Here's what changes when you lock into Claude Code:
+
+  Claude Code-Native Integration
+
+  The Big Win: --output-format stream-json
+
+  Instead of guessing agent state from PIDs, you can parse Claude Code's
+  real-time event stream. Each worktree's agent emits structured JSON lines you
+  can tail and aggregate into the sidebar.
+
+  This turns the sidebar from:
+
+  ● feature-auth   running (12m)     # all we know generically
+
+  into:
+
+  ● feature-auth
+    branch: feat/auth
+    status: editing
+    file: src/auth/login.ts
+    tool: Edit (3rd call)
+    tokens: 45k / 200k
+    last action: wrote src/auth/middleware.ts
+
+  What This Unlocks for the MVP
+
+  1. Rich status detection — no heuristics needed
+
+  Tail the stream-json output. Key events you can react to:
+
+  ┌───────────────────────────────┬─────────────────────┐
+  │             Event             │    Sidebar shows    │
+  ├───────────────────────────────┼─────────────────────┤
+  │ tool_call with tool Bash      │ running: npm test   │
+  ├───────────────────────────────┼─────────────────────┤
+  │ tool_call with tool Edit      │ editing: src/foo.ts │
+  ├───────────────────────────────┼─────────────────────┤
+  │ tool_call with tool Read      │ reading: src/bar.ts │
+  ├───────────────────────────────┼─────────────────────┤
+  │ content_delta                 │ thinking...         │
+  ├───────────────────────────────┼─────────────────────┤
+  │ Waiting for permission prompt │ ⚠ needs approval    │
+  ├───────────────────────────────┼─────────────────────┤
+  │ Process exits code 0          │ ✓ done              │
+  ├───────────────────────────────┼─────────────────────┤
+  │ Process exits code 1          │ ✗ failed            │
+  └───────────────────────────────┴─────────────────────┘
+
+  2. Session resumption with --continue
+
+  Claude Code stores sessions as .jsonl files under ~/.claude/projects/. You can
+   store the session ID per worktree in state.json and offer:
+
+  pwm resume feature-auth   # claude --continue <session-id> inside that 
+  worktree
+
+  This means if an agent crashes or the server restarts, you don't lose the
+  conversation context.
+
+  3. Print mode (-p) for non-interactive spawning
+
+  Use claude -p --output-format stream-json inside each tmux pane. This strips
+  the TUI and gives you clean NDJSON output while still being fully functional.
+  You can:
+
+  - Tail the output file for the sidebar
+  - Keep the tmux pane available for manual pwm attach if needed
+  - Or run it purely headless and only show the sidebar
+
+  4. Cost and token tracking
+
+  The stream output includes token counts. You can aggregate across all
+  worktrees and show total spend in the sidebar footer.
+
+  Revised Sidebar Design
+
+  ┌──────────────────────────────────────────────────────────┐
+  │  pwm: my-project                              $4.12 total│
+  │──────────────────────┬───────────────────────────────────│
+  │                      │                                   │
+  │  ● feature-auth      │  $ claude -p --output-format      │
+  │    editing: auth.ts  │  stream-json                       │
+  │    tokens: 45k       │                                   │
+  │    cost: $1.83       │  (live stream-json output here    │
+  │                      │   or interactive claude session)  │
+  │  ● feature-api       │                                   │
+  │    ⚠ needs approval │                                   │
+  │    tokens: 38k       │                                   │
+  │    cost: $1.24       │                                   │
+  │                      │                                   │
+  │  ○ fix-typos         │                                   │
+  │    ✓ done            │                                   │
+  │    tokens: 12k       │                                   │
+  │    cost: $0.41       │                                   │
+  │                      │                                   │
+  │──────────────────────┴───────────────────────────────────│
+  │  ↑↓:navigate enter:attach s:spawn d:delete r:resume q:detach│
+  └──────────────────────────────────────────────────────────┘
+
+  How It Works Under the Hood
+
+  .pwm/
+    state.json              # worktree metadata, session IDs, PIDs
+    feature-auth/
+      (git worktree files)
+      .claude-output.jsonl   # tee'd stream-json output from claude
+    feature-api/
+      (git worktree files)
+      .claude-output.jsonl
+
+  pwm spawn feature-auth does:
+
+  1. Create a new tmux window
+  2. Run: cd .pwm/feature-auth && claude -p --output-format stream-json 2>&1 | 
+  tee .claude-output.jsonl
+  3. Store PID + session ID in state.json
+  4. Sidebar background process tails all .claude-output.jsonl files and renders
+   status
+
+  Sidebar refresh loop (runs in the sidebar tmux pane):
+
+  1. Read state.json for worktree list
+  2. For each worktree, tail the last ~20 lines of .claude-output.jsonl
+  3. Parse the latest tool_call, token count, etc.
+  4. Check if PID is still alive
+  5. Re-render sidebar
+
+  Revised Command Set
+
+  Command: pwm init
+  Notes: Create .pwm/, write config
+  ────────────────────────────────────────
+  Command: pwm create <name>
+  Notes: Git worktree + branch
+  ────────────────────────────────────────
+  Command: pwm spawn <name> [prompt]
+  Notes: Launch claude -p in worktree's tmux window, optional initial prompt
+  ────────────────────────────────────────
+  Command: pwm resume <name>
+  Notes: Reconnect to Claude Code session with --continue
+  ────────────────────────────────────────
+  Command: pwm ls
+  Notes: Print status table (no tmux needed, works over bare SSH)
+  ────────────────────────────────────────
+  Command: pwm attach <name>
+  Notes: Jump to that worktree's tmux window
+  ────────────────────────────────────────
+  Command: pwm kill <name>
+  Notes: Kill the claude process
+  ────────────────────────────────────────
+  Command: pwm rm <name>
+  Notes: Kill + remove worktree + branch
+  ────────────────────────────────────────
+  Command: pwm up
+  Notes: Open the tmux session with sidebar
+  ────────────────────────────────────────
+  Command: pwm down
+  Notes: Close tmux session (agents keep running in background)
+
+  Key Tradeoff: -p (non-interactive) vs Interactive
+
+  You have two modes to offer:
+
+  - pwm spawn <name> "implement auth" — runs claude -p "implement auth"
+  non-interactively, agent goes until done or blocked
+  - pwm spawn <name> -i — runs interactive claude (no -p), user can attach to
+  collaborate
+
+  Both emit stream-json (or can be tee'd). I'd support both in the MVP.
+
+  What This Locks You Out Of
+
+  The honest tradeoff: you're coupled to Claude Code's output format. If it
+  changes, your parser breaks. Mitigation:
+
+  - Keep the parser in one file (src/claude/parser.ts) so it's easy to update
+  - The stream-json format is likely stable since it's a documented public
+  interface
+  - Even if parsing fails, you fall back to PID-alive/dead detection
+
+  ---
+  Want me to start building this? I'd start with project scaffolding + init +
+  create + spawn as the first working slice.
+
+✻ Baked for 6m 12s
+
+❯ create an INITIAL_PROMPT.md with what we discussed and then enter plan    
+  mode for the first working slice                                          
+
+⏺ Write(INITIAL_PROMPT.md)
+  ⎿  Wrote 180 lines to INITIAL_PROMPT.md
+      1 # Petite Worktree Manager (PWM)
+      2 
+      3 A TypeScript CLI tool for managing git worktrees and running mult
+        iple Claude Code agents in parallel. Designed for remote server u
+        se — SSH in, spawn agents across worktrees, detach, reattach late
+        r.
+      4 
+      5 ## Core Concept
+      6 
+      7 Run `pwm` in a repo directory to create and manage isolated git w
+        orktrees inside a project-local `.pwm/` directory, each with its 
+        own Claude Code agent running in a tmux pane. A sidebar shows rea
+        l-time status of all agents.
+      8 
+      9 ## MVP Scope
+     … +170 lines (ctrl+o to expand)
+
+⏺ Entered plan mode
+  Claude is now exploring and designing an implementation approach.
+
+⏺ Let me research the tooling landscape before designing the plan.
+
+⏺ Explore(Research Claude Code stream-json format)
+  ⎿  Done (11 tool uses · 73.2k tokens · 2m 5s)
+  (ctrl+o to expand)
+
+⏺ Good research. Now let me look at the Claude Code SDK more closely, since
+  programmatic spawning would be cleaner than shelling out.
+
+⏺ Explore(Research Claude Code SDK options)
+  ⎿  Done (8 tool uses · 42.3k tokens · 3m 5s)
+  (ctrl+o to expand)
+
+⏺ Now I have enough information to make key architectural decisions and write
+  the plan.
+
+⏺ Updated plan
+  ⎿  /plan to preview
+  ⎿  User rejected Claude's plan:
+     ╭─────────────────────────────────────────────────────────────────────────╮
+     │ PWM First Working Slice — Implementation Plan                           │
+     │                                                                         │
+     │ Context                                                                 │
+     │                                                                         │
+     │ PWM (Petite Worktree Manager) is a TypeScript CLI for managing git      │
+     │ worktrees and running parallel Claude Code agents. The full vision is   │
+     │ documented in INITIAL_PROMPT.md. This plan covers the first working     │
+     │ slice: the minimum set of features that demonstrates the core value     │
+     │ loop — create worktrees, spawn agents, see their status.                │
+     │                                                                         │
+     │ Scope: Four Commands                                                    │
+     │                                                                         │
+     │ Command: pwm init                                                       │
+     │ Purpose: Create .pwm/ directory with config and state files             │
+     │ ────────────────────────────────────────                                │
+     │ Command: pwm create <name>                                              │
+     │ Purpose: Create a git worktree at .pwm/<name>/ on a new branch          │
+     │ ────────────────────────────────────────                                │
+     │ Command: pwm spawn <name> [prompt]                                      │
+     │ Purpose: Launch claude -p in a tmux pane, tee output to jsonl           │
+     │ ────────────────────────────────────────                                │
+     │ Command: pwm ls                                                         │
+     │ Purpose: Show a table of worktrees with branch, agent status, cost      │
+     │                                                                         │
+     │ This gives a complete workflow: init → create → spawn → monitor.        │
+     │                                                                         │
+     │ Key Architecture Decisions                                              │
+     │                                                                         │
+     │ 1. Shell out to claude CLI (not SDK)                                    │
+     │                                                                         │
+     │ The @anthropic-ai/claude-code package is the CLI itself, not a          │
+     │ programmatic SDK. Third-party SDKs (claude-code-sdk,                    │
+     │ ai-sdk-provider-claude-code) add dependency risk for an MVP. Instead:   │
+     │ - Run claude -p --output-format stream-json via child_process.spawn     │
+     │ - Pipe stdout to both tmux pane and .claude-output.jsonl file           │
+     │ - Parse the jsonl file for status information                           │
+     │ - Use --continue for session resumption (future slice)                  │
+     │                                                                         │
+     │ 2. Shell out to tmux directly (no npm wrapper)                          │
+     │                                                                         │
+     │ The tmux.js npm package may be unmaintained. tmux's CLI is stable and   │
+     │ well-documented. Use child_process.exec to run tmux commands. Wrap in a │
+     │  small src/tmux/ module.                                                │
+     │                                                                         │
+     │ 3. Commander for CLI framework                                          │
+     │                                                                         │
+     │ Simpler than yargs for our subcommand structure, built-in TypeScript    │
+     │ types, sufficient for our needs.                                        │
+     │                                                                         │
+     │ 4. No sidebar TUI in this slice                                         │
+     │                                                                         │
+     │ The interactive sidebar with Ink rendering is a second-slice feature.   │
+     │ For now, pwm ls outputs a static table. This keeps the first slice      │
+     │ focused on the core mechanics (worktree creation, agent spawning,       │
+     │ status parsing).                                                        │
+     │                                                                         │
+     │ 5. tsup for builds                                                      │
+     │                                                                         │
+     │ Fast, zero-config, handles shebang/bin entry points well for CLIs.      │
+     │                                                                         │
+     │ File Structure                                                          │
+     │                                                                         │
+     │ pwm/                                                                    │
+     │   src/                                                                  │
+     │     cli.ts                # Commander entry point, registers all        │
+     │ commands                                                                │
+     │     commands/                                                           │
+     │       init.ts             # pwm init                                    │
+     │       create.ts           # pwm create <name>                           │
+     │       spawn.ts            # pwm spawn <name> [prompt]                   │
+     │       ls.ts               # pwm ls                                      │
+     │     tmux/                                                               │
+     │       index.ts            # tmux helpers: hasSession, createSession,    │
+     │ newWindow, sendKeys                                                     │
+     │     worktree/                                                           │
+     │       index.ts            # git worktree helpers: create, remove, list  │
+     │     agent/                                                              │
+     │       spawn.ts            # launch claude process in tmux, tee output   │
+     │       status.ts           # parse jsonl tail, check PID, compute status │
+     │       parser.ts           # parse stream-json events (isolated for easy │
+     │  updates)                                                               │
+     │     state.ts              # read/write .pwm/state.json                  │
+     │     config.ts             # .pwm/config.json schema and defaults        │
+     │     utils.ts              # shared helpers (project root detection,     │
+     │ etc.)                                                                   │
+     │   package.json                                                          │
+     │   tsconfig.json                                                         │
+     │   tsup.config.ts                                                        │
+     │   .gitignore                                                            │
+     │                                                                         │
+     │ Implementation Steps                                                    │
+     │                                                                         │
+     │ Step 1: Project scaffolding                                             │
+     │                                                                         │
+     │ - package.json with "bin": { "pwm": "./dist/cli.js" }, name pwm-cli     │
+     │ (pwm is taken on npm)                                                   │
+     │ - tsconfig.json targeting ES2022, NodeNext modules                      │
+     │ - tsup.config.ts — entry src/cli.ts, format esm, banner with            │
+     │ #!/usr/bin/env node                                                     │
+     │ - .gitignore (node_modules, dist, .pwm)                                 │
+     │ - npm link for local development                                        │
+     │                                                                         │
+     │ Step 2: pwm init                                                        │
+     │                                                                         │
+     │ - Detect we're inside a git repo (check for .git/ or git rev-parse)     │
+     │ - Create .pwm/ directory                                                │
+     │ - Write .pwm/config.json with defaults                                  │
+     │ - Write .pwm/state.json with empty worktrees map                        │
+     │ - Add .pwm/ to repo's .gitignore if not already present                 │
+     │                                                                         │
+     │ Config schema:                                                          │
+     │ {                                                                       │
+     │   "project": "<repo dirname>",                                          │
+     │   "defaultAgent": "claude",                                             │
+     │   "agentCommand": "claude -p --output-format stream-json"               │
+     │ }                                                                       │
+     │                                                                         │
+     │ State schema:                                                           │
+     │ {                                                                       │
+     │   "worktrees": {}                                                       │
+     │ }                                                                       │
+     │                                                                         │
+     │ Step 3: pwm create <name>                                               │
+     │                                                                         │
+     │ - Validate .pwm/ exists (must run init first)                           │
+     │ - Validate name is a valid git branch name, not already taken           │
+     │ - Run git worktree add .pwm/<name> -b <name> (creates branch +          │
+     │ checkout)                                                               │
+     │ - Add entry to state.json:                                              │
+     │ {                                                                       │
+     │   "worktrees": {                                                        │
+     │     "<name>": {                                                         │
+     │       "branch": "<name>",                                               │
+     │       "path": ".pwm/<name>",                                            │
+     │       "agent": null                                                     │
+     │     }                                                                   │
+     │   }                                                                     │
+     │ }                                                                       │
+     │                                                                         │
+     │ Step 4: pwm spawn <name> [prompt]                                       │
+     │                                                                         │
+     │ - Validate worktree exists in state                                     │
+     │ - Validate tmux is installed                                            │
+     │ - Check if a pwm tmux session exists, create if not:                    │
+     │   - Session name: pwm-<repo-hash> (first 8 chars of hashed absolute     │
+     │ path)                                                                   │
+     │   - Created detached (-d)                                               │
+     │ - Create a new tmux window in that session, named <name>                │
+     │ - Build the claude command:                                             │
+     │   - Non-interactive: cd <abs-path-to-worktree> && claude -p "<prompt>"  │
+     │ --output-format stream-json 2>&1 | tee                                  │
+     │ <abs-path-to-worktree>/.claude-output.jsonl                             │
+     │   - If no prompt: cd <abs-path-to-worktree> && claude --output-format   │
+     │ stream-json 2>&1 | tee <abs-path-to-worktree>/.claude-output.jsonl      │
+     │ - Send the command to the tmux window via send-keys                     │
+     │ - Record agent info in state:                                           │
+     │ {                                                                       │
+     │   "agent": {                                                            │
+     │     "pid": null,                                                        │
+     │     "claudeSessionId": null,                                            │
+     │     "mode": "print",                                                    │
+     │     "spawnedAt": "<ISO timestamp>",                                     │
+     │     "status": "running"                                                 │
+     │   }                                                                     │
+     │ }                                                                       │
+     │ - Note: PID tracking requires echo $! after the command; this is a      │
+     │ refinement for later                                                    │
+     │                                                                         │
+     │ Step 5: pwm ls                                                          │
+     │                                                                         │
+     │ - Read state.json                                                       │
+     │ - For each worktree:                                                    │
+     │   - Check if .claude-output.jsonl exists and tail last 100 lines        │
+     │   - Parse latest events for: current tool call, token usage, status     │
+     │   - Check if the tmux window for that worktree still has a running      │
+     │ process                                                                 │
+     │ - Render a table using console.table or manual formatting:              │
+     │ NAME            BRANCH          STATUS        LAST ACTION               │
+     │ TOKENS    COST                                                          │
+     │ feature-auth    feature-auth    running       editing: auth.ts    45k   │
+     │      $1.83                                                              │
+     │ feature-api     feature-api    needs-input   awaiting approval   38k    │
+     │     $1.24                                                               │
+     │ fix-typos       fix-typos      idle          —                   0      │
+     │     $0.00                                                               │
+     │                                                                         │
+     │ Step 6: Stream-json parser (src/agent/parser.ts)                        │
+     │                                                                         │
+     │ Parse individual NDJSON lines from Claude Code's stream-json output.    │
+     │ Key events to extract:                                                  │
+     │                                                                         │
+     │ ┌───────────────────────────────────────────────┬────────────────────── │
+     │ ┐                                                                       │
+     │ │                 Event pattern                 │       Meaning         │
+     │ │                                                                       │
+     │ ├───────────────────────────────────────────────┼────────────────────── │
+     │ ┤                                                                       │
+     │ │ type: "assistant", content has tool_use block │ Agent calling a tool  │
+     │ │                                                                       │
+     │ ├───────────────────────────────────────────────┼────────────────────── │
+     │ ┤                                                                       │
+     │ │ tool_use with name Edit, input has file_path  │ Editing a file        │
+     │ │                                                                       │
+     │ ├───────────────────────────────────────────────┼────────────────────── │
+     │ ┤                                                                       │
+     │ │ tool_use with name Bash, input has command    │ Running a command     │
+     │ │                                                                       │
+     │ ├───────────────────────────────────────────────┼────────────────────── │
+     │ ┤                                                                       │
+     │ │ tool_use with name Read, input has file_path  │ Reading a file        │
+     │ │                                                                       │
+     │ ├───────────────────────────────────────────────┼────────────────────── │
+     │ ┤                                                                       │
+     │ │ type: "assistant", usage field present        │ Token usage update    │
+     │ │                                                                       │
+     │ ├───────────────────────────────────────────────┼────────────────────── │
+     │ ┤                                                                       │
+     │ │ File ends without exit                        │ Still running         │
+     │ │                                                                       │
+     │ └───────────────────────────────────────────────┴────────────────────── │
+     │ ┘                                                                       │
+     │                                                                         │
+     │ - Last non-empty line with a type field = latest event                  │
+     │ - Count lines to estimate activity                                      │
+     │ - Look for usage fields to accumulate token counts                      │
+     │                                                                         │
+     │ Step 7: tmux helper module (src/tmux/index.ts)                          │
+     │                                                                         │
+     │ Thin wrappers around tmux CLI:                                          │
+     │ - hasSession(name: string): Promise<boolean> — tmux has-session -t      │
+     │ <name>                                                                  │
+     │ - createSession(name: string, cwd: string): Promise<void> — tmux        │
+     │ new-session -d -s <name> -c <cwd>                                       │
+     │ - newWindow(session: string, name: string, cwd: string): Promise<void>  │
+     │ — tmux new-window -t <session> -n <name> -c <cwd>                       │
+     │ - sendKeys(target: string, command: string): Promise<void> — tmux       │
+     │ send-keys -t <target> '<command>' Enter                                 │
+     │ - listWindows(session: string): Promise<string[]> — tmux list-windows   │
+     │ -t <session> -F '#{window_name}'                                        │
+     │ - killWindow(target: string): Promise<void> — tmux kill-window -t       │
+     │ <target>                                                                │
+     │                                                                         │
+     │ Step 8: git worktree helper module (src/worktree/index.ts)              │
+     │                                                                         │
+     │ - isGitRepo(): Promise<boolean> — git rev-parse --is-inside-work-tree   │
+     │ - createWorktree(path: string, branch: string): Promise<void> — git     │
+     │ worktree add <path> -b <branch>                                         │
+     │ - removeWorktree(path: string): Promise<void> — git worktree remove     │
+     │ <path>                                                                  │
+     │ - listWorktrees(): Promise<string[]> — git worktree list --porcelain    │
+     │ - isValidBranchName(name: string): boolean — basic validation           │
+     │                                                                         │
+     │ Dependencies                                                            │
+     │                                                                         │
+     │ {                                                                       │
+     │   "dependencies": {},                                                   │
+     │   "devDependencies": {                                                  │
+     │     "typescript": "^5.7",                                               │
+     │     "tsup": "^8.0",                                                     │
+     │     "@types/node": "^22"                                                │
+     │   }                                                                     │
+     │ }                                                                       │
+     │                                                                         │
+     │ Zero runtime dependencies. Commander is not included — the subcommand   │
+     │ structure is simple enough to handle with manual process.argv parsing   │
+     │ or a lightweight custom router. This keeps the tool lean and avoids     │
+     │ supply chain risk.                                                      │
+     │                                                                         │
+     │ Reconsideration point: If manual arg parsing gets ugly, add commander   │
+     │ as the one runtime dep. The subcommands are: init, create <name>, spawn │
+     │  <name> [prompt], ls. With options like spawn -i for interactive mode.  │
+     │ Commander would save ~50 lines of arg parsing code. Decision: use       │
+     │ commander.                                                              │
+     │                                                                         │
+     │ Revised deps:                                                           │
+     │ {                                                                       │
+     │   "dependencies": {                                                     │
+     │     "commander": "^13.0"                                                │
+     │   },                                                                    │
+     │   "devDependencies": {                                                  │
+     │     "typescript": "^5.7",                                               │
+     │     "tsup": "^8.0",                                                     │
+     │     "@types/node": "^22",                                               │
+     │     "tsx": "^4.0"                                                       │
+     │   }                                                                     │
+     │ }                                                                       │
+     │                                                                         │
+     │ Verification / Testing                                                  │
+     │                                                                         │
+     │ After implementation, verify end-to-end:                                │
+     │                                                                         │
+     │ 1. Build: npm run build — should compile without errors                 │
+     │ 2. Init: cd /tmp/test-repo && git init && pwm init — should create      │
+     │ .pwm/ with config and state                                             │
+     │ 3. Create: pwm create feature-test — should create .pwm/feature-test/   │
+     │ as a git worktree on branch feature-test                                │
+     │ 4. Spawn: pwm spawn feature-test "create a hello.txt file" — should     │
+     │ launch claude in a tmux window, tee output to jsonl                     │
+     │ 5. List: pwm ls — should show the worktree with status "running" and    │
+     │ latest action                                                           │
+     │ 6. Wait for completion: sleep 60 && pwm ls — should show status "done"  │
+     │ after agent finishes                                                    │
+     │ 7. Cleanup: Verify git worktree remove .pwm/feature-test works and      │
+     │ branch can be deleted                                                   │
+     │                                                                         │
+     │ Also verify:                                                            │
+     │ - Running pwm with no args shows help                                   │
+     │ - Running commands outside a git repo shows clear error                 │
+     │ - Running create/spawn before init shows clear error                    │
+     │ - tmux session persists after detaching (tmux attach -t pwm-<hash>)     │
+     │                                                                         │
+     │ Implementation Order                                                    │
+     │                                                                         │
+     │ 1. Project scaffolding (package.json, tsconfig, tsup, .gitignore)       │
+     │ 2. src/cli.ts — Commander setup with all 4 commands stubbed             │
+     │ 3. src/config.ts + src/state.ts — config/state read/write               │
+     │ 4. src/utils.ts — project root detection                                │
+     │ 5. src/worktree/index.ts — git helpers                                  │
+     │ 6. src/tmux/index.ts — tmux helpers                                     │
+     │ 7. src/commands/init.ts                                                 │
+     │ 8. src/commands/create.ts                                               │
+     │ 9. src/agent/parser.ts — stream-json parser                             │
+     │ 10. src/agent/status.ts — status computation                            │
+     │ 11. src/agent/spawn.ts — agent launch logic                             │
+     │ 12. src/commands/spawn.ts                                               │
+     │ 13. src/commands/ls.ts                                                  │
+     │ 14. Build + manual testing                                              │
+     ╰─────────────────────────────────────────────────────────────────────────╯
