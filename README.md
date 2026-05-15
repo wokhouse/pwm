@@ -14,6 +14,7 @@
 git clone https://github.com/wokhouse/pwm.git
 cd pwm
 npm install
+npm run build
 npm link
 ```
 
